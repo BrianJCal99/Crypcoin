@@ -137,9 +137,22 @@ export default function SymbolPage() {
     const histogramSeriesRef = useRef(null);
     const lineSeriesRef = useRef(null);
 
+    const [activeChartType, setActiveChartType] = useState('candlestick');
+    const [interval, setInterval] = useState('1m');
     const [kline, setKline] = useState({});
     const [priceMovementState, setPriceMovementState] = useState(null);
     const [historicalDataLoaded, setHistoricalDataLoaded] = useState(false);
+
+    // Instance refs for manipulating charts after initialization
+    const candlestickInstanceRef = useRef(null);
+    const areaInstanceRef = useRef(null);
+    const barInstanceRef = useRef(null);
+    const baselineInstanceRef = useRef(null);
+    const histogramInstanceRef = useRef(null);
+    const lineInstanceRef = useRef(null);
+
+    // Calculate timezone offset (UTC to Local) in seconds
+    const timezoneOffset = typeof window !== 'undefined' ? new Date().getTimezoneOffset() * 60 : 0;
 
     // Function to fetch historical kline data from Binance REST API
     const fetchHistoricalData = async (symbol, interval = '1m', limit = 1000) => {
@@ -150,7 +163,7 @@ export default function SymbolPage() {
             const data = await response.json();
 
             const candlestickData = data.map(candle => ({
-                time: Math.floor(candle[0] / 1000),
+                time: Math.floor(candle[0] / 1000) - timezoneOffset,
                 open: parseFloat(candle[1]),
                 high: parseFloat(candle[2]),
                 low: parseFloat(candle[3]),
@@ -158,7 +171,7 @@ export default function SymbolPage() {
             }));
 
             const areaData = data.map(candle => ({
-                time: Math.floor(candle[0] / 1000),
+                time: Math.floor(candle[0] / 1000) - timezoneOffset,
                 value: parseFloat(candle[4]),
             }));
 
@@ -174,8 +187,8 @@ export default function SymbolPage() {
         setHistoricalDataLoaded(false);
 
         const loadHistoricalData = async () => {
-            console.log('Fetching historical data for', symbol);
-            const { candlestickData, areaData } = await fetchHistoricalData(symbol);
+            console.log('Fetching historical data for', symbol, 'interval', interval);
+            const { candlestickData, areaData } = await fetchHistoricalData(symbol, interval);
 
             if (candlestickData.length > 0) {
                 if (candlestickSeriesRef.current) {
@@ -211,7 +224,7 @@ export default function SymbolPage() {
         };
 
         loadHistoricalData();
-    }, [symbol]);
+    }, [symbol, interval]);
 
     // Initialize charts
     useEffect(() => {
@@ -228,9 +241,13 @@ export default function SymbolPage() {
             },
             priceScale: { borderColor: "#000000" },
             timeScale: { borderColor: "#000000", timeVisible: true },
+            localization: {
+                locale: typeof window !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().locale : 'en-US',
+            },
         });
 
         const candlestickChart = createChart(candlestickChartRef.current, getChartOptions(candlestickChartRef.current));
+        candlestickInstanceRef.current = candlestickChart;
         const candlestickSeries = candlestickChart.addCandlestickSeries({
             upColor: "#15803d",
             downColor: "#b91c1c",
@@ -243,6 +260,7 @@ export default function SymbolPage() {
         candlestickSeriesRef.current = candlestickSeries;
 
         const areaChart = createChart(areaChartRef.current, getChartOptions(areaChartRef.current));
+        areaInstanceRef.current = areaChart;
         const areaSeries = areaChart.addAreaSeries({
             lineColor: "#000000",
             topColor: "#d1d5db",
@@ -251,6 +269,7 @@ export default function SymbolPage() {
         areaSeriesRef.current = areaSeries;
 
         const barChart = createChart(barChartRef.current, getChartOptions(barChartRef.current));
+        barInstanceRef.current = barChart;
         const barSeries = barChart.addBarSeries({
             upColor: "#15803d",
             downColor: "#b91c1c",
@@ -261,6 +280,7 @@ export default function SymbolPage() {
         barSeriesRef.current = barSeries;
 
         const baselineChart = createChart(baselineChartRef.current, getChartOptions(baselineChartRef.current));
+        baselineInstanceRef.current = baselineChart;
         const baselineSeries = baselineChart.addBaselineSeries({
             baseValue: { type: "price", price: 25 },
             topLineColor: "#15803d",
@@ -273,12 +293,14 @@ export default function SymbolPage() {
         baselineSeriesRef.current = baselineSeries;
 
         const histogramChart = createChart(histogramChartRef.current, getChartOptions(histogramChartRef.current));
+        histogramInstanceRef.current = histogramChart;
         const histogramSeries = histogramChart.addHistogramSeries({
             color: "#15803d",
         });
         histogramSeriesRef.current = histogramSeries;
 
         const lineChart = createChart(lineChartRef.current, getChartOptions(lineChartRef.current));
+        lineInstanceRef.current = lineChart;
         const lineSeries = lineChart.addLineSeries({
             lineColor: "#000000",
             lineWidth: 2,
@@ -314,8 +336,35 @@ export default function SymbolPage() {
             baselineChart.remove();
             histogramChart.remove();
             lineChart.remove();
+
+            candlestickInstanceRef.current = null;
+            areaInstanceRef.current = null;
+            barInstanceRef.current = null;
+            baselineInstanceRef.current = null;
+            histogramInstanceRef.current = null;
+            lineInstanceRef.current = null;
         };
     }, []);
+
+    // Scroll active chart to real-time when chart type changes
+    useEffect(() => {
+        const chartRefs = {
+            'candlestick': candlestickInstanceRef,
+            'area': areaInstanceRef,
+            'bar': barInstanceRef,
+            'baseline': baselineInstanceRef,
+            'histogram': histogramInstanceRef,
+            'line': lineInstanceRef,
+        };
+
+        const activeChart = chartRefs[activeChartType]?.current;
+        if (activeChart) {
+            // Small delay to ensure the DOM is updated and chart is visible
+            setTimeout(() => {
+                activeChart.timeScale().scrollToRealTime();
+            }, 50);
+        }
+    }, [activeChartType]);
 
     // Ticker WebSocket for table data
     useEffect(() => {
@@ -340,16 +389,16 @@ export default function SymbolPage() {
         };
     }, [symbol]);
 
-    // Kline WebSocket for candlestick and bar charts
+    // Unified Kline WebSocket for ALL chart types
     useEffect(() => {
         if (!historicalDataLoaded) return;
 
         const binanceSocket_Kline = new WebSocket(
-            `wss://stream.binance.com:9443/ws/${symbol}@kline_1s`
+            `wss://stream.binance.com:9443/ws/${symbol}@kline_${interval}`
         );
 
         binanceSocket_Kline.onopen = () => {
-            console.log("WebSocket connection for kline payload established.");
+            console.log(`WebSocket connection for kline_${interval} established.`);
         };
 
         binanceSocket_Kline.onmessage = (event) => {
@@ -379,37 +428,43 @@ export default function SymbolPage() {
                 },
             }));
 
-            const candlestickData = {
-                time: Math.floor(eventTime / 1000),
+            const time = Math.floor(startTime / 1000) - timezoneOffset;
+            const price = parseFloat(closePrice);
+
+            // Update Candlestick and Bar charts
+            const ohlcData = {
+                time,
                 open: parseFloat(openPrice),
                 high: parseFloat(highPrice),
                 low: parseFloat(lowPrice),
-                close: parseFloat(closePrice),
+                close: price,
             };
 
-            if (candlestickSeriesRef.current) {
-                candlestickSeriesRef.current.update(candlestickData);
-            }
+            if (candlestickSeriesRef.current) candlestickSeriesRef.current.update(ohlcData);
+            if (barSeriesRef.current) barSeriesRef.current.update(ohlcData);
 
-            const barData = {
-                open: parseFloat(openPrice),
-                high: parseFloat(highPrice),
-                low: parseFloat(lowPrice),
-                close: parseFloat(closePrice),
-                time: Math.floor(eventTime / 1000),
-            };
+            // Update Area, Line, Baseline, Histogram charts
+            const singleValueData = { time, value: price };
 
-            if (barSeriesRef.current) {
-                barSeriesRef.current.update(barData);
+            if (areaSeriesRef.current) areaSeriesRef.current.update(singleValueData);
+            if (lineSeriesRef.current) lineSeriesRef.current.update(singleValueData);
+            if (baselineSeriesRef.current) baselineSeriesRef.current.update(singleValueData);
+
+            if (histogramSeriesRef.current) {
+                // Determine color based on price vs previous kline close (simple logic)
+                histogramSeriesRef.current.update({
+                    ...singleValueData,
+                    color: price >= parseFloat(openPrice) ? '#15803d' : '#b91c1c'
+                });
             }
         };
 
         return () => {
             binanceSocket_Kline.close();
         };
-    }, [symbol, historicalDataLoaded]);
+    }, [symbol, interval, historicalDataLoaded]);
 
-    // Ticker WebSocket for area, baseline, histogram, and line charts
+    // Ticker WebSocket only for Price Info and Table updates
     useEffect(() => {
         if (!historicalDataLoaded) return;
 
@@ -428,22 +483,9 @@ export default function SymbolPage() {
         binanceSocket_Ticker.onmessage = (event) => {
             const message = JSON.parse(event.data);
             const {
-                e: eventType,
-                E: eventTime,
-                s: symbol,
                 p: priceChange,
-                P: priceChangePercent,
                 c: lastPrice,
             } = message;
-
-            const color =
-                previousLastPrice === null
-                    ? "#15803d"
-                    : lastPrice < previousLastPrice
-                        ? "#b91c1c"
-                        : "#15803d";
-
-            previousLastPrice = lastPrice;
 
             let newPriceMovementState;
             if (previousPriceChange === null) {
@@ -460,43 +502,6 @@ export default function SymbolPage() {
             previousPriceChange = priceChange;
             previousPriceMovementState = newPriceMovementState;
             setPriceMovementState(newPriceMovementState);
-
-            const areaSeriesData = {
-                value: parseFloat(lastPrice),
-                time: Math.floor(eventTime / 1000),
-            };
-
-            if (areaSeriesRef.current) {
-                areaSeriesRef.current.update(areaSeriesData);
-            }
-
-            const baselineSeriesData = {
-                value: parseFloat(lastPrice),
-                time: Math.floor(eventTime / 1000),
-            };
-
-            if (baselineSeriesRef.current) {
-                baselineSeriesRef.current.update(baselineSeriesData);
-            }
-
-            const histogramSeriesData = {
-                value: parseFloat(lastPrice),
-                time: Math.floor(eventTime / 1000),
-                color: color,
-            };
-
-            if (histogramSeriesRef.current) {
-                histogramSeriesRef.current.update(histogramSeriesData);
-            }
-
-            const lineSeriesData = {
-                value: parseFloat(lastPrice),
-                time: Math.floor(eventTime / 1000),
-            };
-
-            if (lineSeriesRef.current) {
-                lineSeriesRef.current.update(lineSeriesData);
-            }
         };
 
         return () => {
@@ -575,46 +580,74 @@ export default function SymbolPage() {
                     </div>
                 )}
 
-                {/* Charts Grid */}
+                {/* Interval and Charts Selection */}
                 <div className="mb-8">
-                    <div className="text-xs text-gray-500 mb-4 tracking-widest text-center">
-                        ━━━ TECHNICAL ANALYSIS CHARTS ━━━
-                    </div>
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        <div className="bg-white border-2 border-black p-4">
-                            <h3 className="text-sm font-bold mb-3 uppercase tracking-wide border-b-2 border-black pb-2">
-                                [ Area Chart ]
-                            </h3>
-                            <div ref={areaChartRef}></div>
+                    {/* Interval Selection */}
+                    <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
+                        <div className="text-[10px] text-gray-500 uppercase tracking-widest w-full text-center mb-1">
+                            Select Interval
                         </div>
-                        <div className="bg-white border-2 border-black p-4">
-                            <h3 className="text-sm font-bold mb-3 uppercase tracking-wide border-b-2 border-black pb-2">
-                                [ Candlestick Chart ]
-                            </h3>
+                        {['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '1d', '1w', '1M'].map((i) => (
+                            <button
+                                key={i}
+                                onClick={() => setInterval(i)}
+                                className={`px-3 py-1 text-[10px] font-bold uppercase transition-all border-2 border-black ${interval === i
+                                    ? "bg-gray-800 text-white"
+                                    : "bg-white text-black hover:bg-gray-100"
+                                    }`}
+                            >
+                                {i}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Chart Type Selection */}
+                    <div className="flex flex-wrap items-center justify-center gap-2 mb-6">
+                        <div className="text-[10px] text-gray-500 uppercase tracking-widest w-full text-center mb-1">
+                            Select Chart Type
+                        </div>
+                        {[
+                            { id: 'candlestick', label: 'Candlestick' },
+                            { id: 'area', label: 'Area' },
+                            { id: 'bar', label: 'Bar' },
+                            { id: 'baseline', label: 'Baseline' },
+                            { id: 'histogram', label: 'Histogram' },
+                            { id: 'line', label: 'Line' },
+                        ].map((chart) => (
+                            <button
+                                key={chart.id}
+                                onClick={() => setActiveChartType(chart.id)}
+                                className={`px-4 py-2 text-xs font-bold uppercase transition-all border-2 border-black ${activeChartType === chart.id
+                                    ? "bg-black text-white"
+                                    : "bg-white text-black hover:bg-gray-100"
+                                    }`}
+                            >
+                                [{chart.label}]
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="bg-white border-2 border-black p-4 relative min-h-[400px]">
+                        <div className="text-xs text-gray-500 mb-4 tracking-widest text-center border-b-2 border-black pb-2">
+                            ━━━ {activeChartType.toUpperCase()} ANALYSIS ━━━
+                        </div>
+
+                        <div className={activeChartType === 'candlestick' ? 'block' : 'hidden'}>
                             <div ref={candlestickChartRef}></div>
                         </div>
-                        <div className="bg-white border-2 border-black p-4">
-                            <h3 className="text-sm font-bold mb-3 uppercase tracking-wide border-b-2 border-black pb-2">
-                                [ Bar Chart ]
-                            </h3>
+                        <div className={activeChartType === 'area' ? 'block' : 'hidden'}>
+                            <div ref={areaChartRef}></div>
+                        </div>
+                        <div className={activeChartType === 'bar' ? 'block' : 'hidden'}>
                             <div ref={barChartRef}></div>
                         </div>
-                        <div className="bg-white border-2 border-black p-4">
-                            <h3 className="text-sm font-bold mb-3 uppercase tracking-wide border-b-2 border-black pb-2">
-                                [ Baseline Chart ]
-                            </h3>
+                        <div className={activeChartType === 'baseline' ? 'block' : 'hidden'}>
                             <div ref={baselineChartRef}></div>
                         </div>
-                        <div className="bg-white border-2 border-black p-4">
-                            <h3 className="text-sm font-bold mb-3 uppercase tracking-wide border-b-2 border-black pb-2">
-                                [ Histogram Chart ]
-                            </h3>
+                        <div className={activeChartType === 'histogram' ? 'block' : 'hidden'}>
                             <div ref={histogramChartRef}></div>
                         </div>
-                        <div className="bg-white border-2 border-black p-4">
-                            <h3 className="text-sm font-bold mb-3 uppercase tracking-wide border-b-2 border-black pb-2">
-                                [ Line Chart ]
-                            </h3>
+                        <div className={activeChartType === 'line' ? 'block' : 'hidden'}>
                             <div ref={lineChartRef}></div>
                         </div>
                     </div>
