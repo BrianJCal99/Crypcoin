@@ -34,7 +34,7 @@ export default function AboutPage() {
                 <div className="flex items-center justify-center gap-4 text-xs font-bold text-gray-400">
                     <span>[ EST. 2025 ]</span>
                     <span>•</span>
-                    <span>[ v1.0.4 ]</span>
+                    <span>[ v1.0.0 ]</span>
                 </div>
             </div>
 
